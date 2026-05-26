@@ -1,0 +1,25 @@
+# Phantom Framework Dependencies
+# Python 3.10+ required
+
+# Core HTTP client
+httpx>=0.27.0
+
+# Environment configuration
+python-dotenv>=1.0.0
+
+# Terminal output formatting
+rich>=13.7.0
+
+# Testing framework (dev dependency)
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+
+# Optional: For enhanced reporting (uncomment if needed)
+# markdown>=3.5.0
+# jinja2>=3.1.0
+
+# LLM clients for mutation engine and benchmark suite (optional)
+# Uncomment the ones you need:
+# openai>=1.0.0           # For GPT-4 benchmarking and mutation
+# anthropic>=0.21.0       # For Claude benchmarking and mutation
+# google-generativeai>=0.3.0  # For Gemini benchmarking

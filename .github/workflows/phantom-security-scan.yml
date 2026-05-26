@@ -1,0 +1,174 @@
+# .github/workflows/phantom-security-scan.yml
+#
+# Example GitHub Actions workflow for integrating Phantom into CI/CD
+#
+# This workflow:
+# 1. Spins up a test application
+# 2. Runs Phantom security scan
+# 3. Fails the build if critical vulnerabilities are found
+# 4. Uploads scan results as artifacts
+#
+# Usage:
+#   Copy this file to your repository's .github/workflows/ directory
+#   Customize the target URL and scan profile as needed
+
+name: Phantom Security Scan
+
+on:
+  # Run on every push to main/master
+  push:
+    branches: [ main, master ]
+  
+  # Run on pull requests
+  pull_request:
+    branches: [ main, master ]
+  
+  # Allow manual triggers
+  workflow_dispatch:
+  
+  # Run nightly at 2 AM UTC
+  schedule:
+    - cron: '0 2 * * *'
+
+jobs:
+  security-scan:
+    runs-on: ubuntu-latest
+    
+    steps:
+      # ========================================================================
+      # 1. Checkout code
+      # ========================================================================
+      
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      # ========================================================================
+      # 2. Set up Python
+      # ========================================================================
+      
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      
+      # ========================================================================
+      # 3. Install Phantom
+      # ========================================================================
+      
+      - name: Install Phantom dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      
+      # ========================================================================
+      # 4. Start test application (customize this for your app)
+      # ========================================================================
+      
+      - name: Start test application
+        run: |
+          # Example: Start a vulnerable chatbot for testing
+          python demo/demo_target.py &
+          echo $! > app.pid
+          sleep 5  # Wait for app to be ready
+      
+      # ========================================================================
+      # 5. Run Phantom scan
+      # ========================================================================
+      
+      - name: Run Phantom security scan
+        id: phantom_scan
+        run: |
+          python phantom.py scan http://localhost:5000 \
+            --profile ci \
+            --formats json html \
+            --output-dir scan-results \
+            || echo "SCAN_FAILED=true" >> $GITHUB_ENV
+      
+      # ========================================================================
+      # 6. Parse results and fail build if critical findings
+      # ========================================================================
+      
+      - name: Check for critical vulnerabilities
+        run: |
+          # Parse JSON report and count critical findings
+          CRITICAL_COUNT=$(python -c "
+          import json, glob
+          files = glob.glob('scan-results/*.json')
+          if not files:
+              print(0)
+          else:
+              with open(files[0]) as f:
+                  data = json.load(f)
+                  findings = data.get('findings', [])
+                  critical = sum(1 for f in findings if f.get('severity') == 'critical')
+                  print(critical)
+          ")
+          
+          echo "Critical vulnerabilities found: $CRITICAL_COUNT"
+          
+          if [ "$CRITICAL_COUNT" -gt 0 ]; then
+            echo "::error::$CRITICAL_COUNT critical vulnerabilities detected!"
+            exit 1
+          fi
+      
+      # ========================================================================
+      # 7. Upload scan results as artifacts
+      # ========================================================================
+      
+      - name: Upload scan results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: phantom-scan-results
+          path: scan-results/
+          retention-days: 30
+      
+      # ========================================================================
+      # 8. Comment on PR with results (optional)
+      # ========================================================================
+      
+      - name: Comment PR with scan results
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+            const glob = require('glob');
+            
+            const jsonFiles = glob.sync('scan-results/*.json');
+            if (jsonFiles.length === 0) {
+              return;
+            }
+            
+            const report = JSON.parse(fs.readFileSync(jsonFiles[0]));
+            const findings = report.findings || [];
+            
+            const summary = `
+            ## 🔒 Phantom Security Scan Results
+            
+            **Total Findings:** ${findings.length}
+            - 🔴 Critical: ${findings.filter(f => f.severity === 'critical').length}
+            - 🟠 High: ${findings.filter(f => f.severity === 'high').length}
+            - 🟡 Medium: ${findings.filter(f => f.severity === 'medium').length}
+            - 🟢 Low: ${findings.filter(f => f.severity === 'low').length}
+            
+            ${findings.length > 0 ? '⚠️ Vulnerabilities detected. Review the artifacts for details.' : '✅ No vulnerabilities detected.'}
+            `;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: summary
+            });
+      
+      # ========================================================================
+      # 9. Cleanup
+      # ========================================================================
+      
+      - name: Stop test application
+        if: always()
+        run: |
+          if [ -f app.pid ]; then
+            kill $(cat app.pid) || true
+          fi
