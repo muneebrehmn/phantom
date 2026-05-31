@@ -153,9 +153,9 @@ class PhantomConfig:
     max_pages: int = 100             # Hard cap on total pages visited
     crawl_timeout: float = 10.0      # Per-request timeout in seconds
     crawl_concurrency: int = 5       # Max simultaneous async HTTP requests
-    respect_robots: bool = True      # Honour robots.txt disallow rules
+    respect_robots: bool = False     # Honour robots.txt disallow rules (off by default in scan mode)
     user_agent: str = (
-        "Phantom/0.1 (security research; contact: phantom@localhost)"
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     )
 
     # --- Fingerprinter ---
@@ -174,9 +174,17 @@ class PhantomConfig:
     # the old PhantomConfig.  All three are now defined correctly here.
 
     concurrency_limit: int = 5        # Max simultaneous payload POST tasks
-    request_timeout: float = 20.0     # HTTP timeout for payload POSTs (seconds)
-    rate_limit_rps: float = 1.0       # Requests per second to target
+    request_timeout: float = 10.0     # HTTP timeout for payload POSTs (seconds)
+    rate_limit_rps: float = 0.2       # Requests per second to target (conservative)
     rate_limit_burst: int = 3         # Token-bucket burst capacity
+    # NOTE: rate_limit_rps is PER-WORKER. With crawl_concurrency=5, actual RPS = 5 * rate_limit_rps.
+    # Example: rate_limit_rps=0.2 + crawl_concurrency=5 = 1.0 RPS effective.
+    # Reduce rate_limit_rps further if you want lower overall rate. Default 0.2 is conservative.
+
+    # --- SSL/TLS verification ---
+    verify_ssl: bool = True           # Verify SSL certificates (default: safe)
+    allow_self_signed: bool = False   # Allow self-signed certs (requires --insecure flag)
+    ssl_cert_path: str = ""           # Path to client certificate (PEM format)
 
     @property
     def rate_limit_delay(self) -> float:
@@ -206,31 +214,75 @@ class PhantomConfig:
     )
     llm_payload_assist: bool = False   # Off by default — keeps runs deterministic
 
+    # --- Adaptive attack engine ---
+    # When True, Phantom runs a defence-aware synthesis loop after the static
+    # payload phase.  Requires anthropic_api_key to be set.
+    # Each surface x goal costs up to adaptive_max_rounds x adaptive_candidates_per_round
+    # Anthropic API calls.
+    adaptive_attack: bool = False
+    adaptive_max_rounds: int = 3            # Max synthesis rounds per surface/goal
+    adaptive_candidates_per_round: int = 5  # Candidates synthesised per round
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 
+    # Set to True only in unit tests to bypass rate-limit validation.
+    # Never set this in production code.
+    _testing: bool = False
+
     def __post_init__(self) -> None:
         """Validate immediately so bad configs fail at startup, not mid-crawl."""
-        self._validate()
+        if not self._testing:
+            self._validate()
 
     def _validate(self) -> None:
+        """Validate all configuration parameters. Called on __post_init__."""
         if self.max_depth < 1:
             raise ValueError("max_depth must be >= 1")
         if self.max_pages < 1:
             raise ValueError("max_pages must be >= 1")
         if self.crawl_concurrency < 1:
             raise ValueError("crawl_concurrency must be >= 1")
+        if self.crawl_concurrency > 50:
+            raise ValueError("crawl_concurrency > 50 may cause resource exhaustion")
         if self.concurrency_limit < 1:
             raise ValueError("concurrency_limit must be >= 1")
+        if self.concurrency_limit > 50:
+            raise ValueError("concurrency_limit > 50 may cause resource exhaustion")
         if self.rate_limit_rps <= 0:
             raise ValueError("rate_limit_rps must be positive")
+        if self.rate_limit_rps > 10.0:
+            raise ValueError("rate_limit_rps > 10 is too aggressive and will harm targets")
+        if self.rate_limit_rps > 1.0:
+            import warnings
+            warnings.warn(
+                f"rate_limit_rps={self.rate_limit_rps} is aggressive. "
+                "This combined with concurrency may hammer the target. "
+                "Consider using <= 0.5 for safety.",
+                stacklevel=2
+            )
+        if self.crawl_timeout <= 0:
+            raise ValueError("crawl_timeout must be positive")
+        if self.fingerprint_timeout <= 0:
+            raise ValueError("fingerprint_timeout must be positive")
+        if self.request_timeout <= 0:
+            raise ValueError("request_timeout must be positive")
         if self.target_url and not self.target_url.startswith(("http://", "https://")):
             raise ValueError(f"target_url must include scheme: {self.target_url!r}")
+        if self.allow_self_signed and self.verify_ssl:
+            raise ValueError(
+                "Conflicting SSL options: allow_self_signed=True requires verify_ssl=False. "
+                "Use --insecure flag to set both correctly."
+            )
+        if self.ssl_cert_path and not os.path.isfile(self.ssl_cert_path):
+            raise ValueError(f"SSL certificate file not found: {self.ssl_cert_path!r}")
 
     def with_target(self, url: str) -> "PhantomConfig":
         """
         Return a new PhantomConfig with target_url and allowed_domains set.
+
+        Validates that the target URL is on an allowed domain before accepting it.
 
         Usage:
             config = PhantomConfig().with_target("https://example.com")
@@ -238,6 +290,9 @@ class PhantomConfig:
         from urllib.parse import urlparse
         parsed = urlparse(url)
         domain = parsed.netloc
+
+        if not domain:
+            raise ValueError(f"Invalid target URL — no domain found: {url!r}")
 
         # Collect all current field values, then override the two we need.
         # Using __dataclass_fields__ ensures we don't miss any field.
@@ -247,7 +302,25 @@ class PhantomConfig:
         }
         current["target_url"] = url.rstrip("/")
         current["allowed_domains"] = self.allowed_domains or [domain]
-        return PhantomConfig(**current)
+
+        config = PhantomConfig(**current)
+        # Validate that target is actually on an allowed domain
+        if config.scope_strict and not self._is_target_in_scope(config.target_url, config.allowed_domains):
+            raise ValueError(
+                f"Target URL {url!r} is not on an allowed domain. "
+                f"Allowed: {config.allowed_domains}. "
+                "Set allowed_domains or use scope_strict=False."
+            )
+        return config
+
+    @staticmethod
+    def _is_target_in_scope(url: str, allowed_domains: list[str]) -> bool:
+        """Check if URL netloc is in allowed_domains list."""
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        target_netloc = parsed.netloc.lower()
+        allowed_netlocs = [d.lower() for d in allowed_domains]
+        return target_netloc in allowed_netlocs
 
     @property
     def headers(self) -> dict[str, str]:
@@ -258,3 +331,17 @@ class PhantomConfig:
         base = {"User-Agent": self.user_agent}
         base.update(self.custom_headers)
         return base
+
+    @property
+    def ssl_verify(self) -> bool | str:
+        """
+        Return the verify parameter for httpx.
+        - True: verify SSL certificates (default, safe)
+        - False: skip verification (for self-signed certs, development)
+        - str path: verify with specific CA bundle
+        """
+        if self.allow_self_signed:
+            return False
+        if self.ssl_cert_path:
+            return self.ssl_cert_path
+        return self.verify_ssl

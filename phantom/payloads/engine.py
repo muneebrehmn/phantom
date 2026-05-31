@@ -17,6 +17,9 @@ Design decisions:
   handle edge cases like redirects changing the netloc.
 - The engine does NOT analyze results — that is the analyzer layer's job.
   This separation keeps each layer testable in isolation.
+- Retry logic uses exponential backoff for transient failures:
+  httpx.TimeoutException, httpx.ConnectError, and HTTP 503.
+  Max 3 attempts with delays of 1s, 2s, 4s between them.
 """
 
 from __future__ import annotations
@@ -27,6 +30,19 @@ from typing import List, Optional
 from urllib.parse import urlparse
 
 import httpx
+
+# ---------------------------------------------------------------------------
+# Retry constants
+# ---------------------------------------------------------------------------
+
+#: Maximum number of attempts per payload request (1 original + 2 retries).
+_MAX_ATTEMPTS: int = 3
+
+#: Seconds to wait before attempt N (index 0 = no delay before first attempt).
+_RETRY_DELAYS: tuple[float, ...] = (0.0, 1.0, 2.0, 4.0)
+
+#: HTTP status codes that are transient and warrant a retry.
+_RETRYABLE_STATUS: frozenset[int] = frozenset({503})
 
 from phantom.core.config import PhantomConfig
 from phantom.core.logger import get_logger
@@ -57,11 +73,11 @@ class PayloadEngine:
         self.semaphore = asyncio.Semaphore(config.concurrency_limit)
 
         # One persistent client for the whole engine lifetime.
-        # verify=False because security research targets often have self-signed certs.
+        # verify is now configurable (config.ssl_verify handles allow_self_signed, certs, etc.)
         # request_timeout is the correct config field (was config.timeout before — didn't exist).
         self.client = httpx.AsyncClient(
             timeout=config.request_timeout,
-            verify=False,
+            verify=config.ssl_verify,
             follow_redirects=True,
             headers=config.headers,
             cookies=config.session_cookies,
@@ -124,7 +140,11 @@ class PayloadEngine:
         because we don't know which one the endpoint uses (the crawler
         identifies forms but API endpoints may have arbitrary field names).
 
-        Returns None if the HTTP request itself fails (e.g. timeout).
+        Transient failures (TimeoutException, ConnectError, HTTP 503) are
+        retried up to _MAX_ATTEMPTS times with exponential backoff delays of
+        1 s → 2 s → 4 s.  All other HTTP errors are terminal.
+
+        Returns None if all attempts fail.
         """
         async with self.semaphore:
             # Sleep between requests to respect the target's rate limit.
@@ -135,51 +155,100 @@ class PayloadEngine:
                 log.warning("Payload skipped — out of scope: %s", surface.url)
                 return None
 
-            start = time.perf_counter()
-            try:
-                # Inject into the most common chat/API parameter names.
-                # A smarter injection would use the form field names extracted
-                # by the crawler — that is a future enhancement.
-                payload_data = {
-                    "message": payload.text,
-                    "input": payload.text,
-                    "query": payload.text,
-                    "prompt": payload.text,
-                    "q": payload.text,
-                }
+            # Inject into the most common chat/API parameter names.
+            # A smarter injection would use the form field names extracted
+            # by the crawler — that is a future enhancement.
+            payload_data = {
+                "message": payload.text,
+                "input": payload.text,
+                "query": payload.text,
+                "prompt": payload.text,
+                "q": payload.text,
+            }
 
-                resp = await self.client.post(
-                    surface.url,
-                    json=payload_data,
+            last_exc: Optional[Exception] = None
+
+            for attempt in range(1, _MAX_ATTEMPTS + 1):
+                # Exponential backoff: no delay on first attempt, then 1s/2s/4s.
+                delay = _RETRY_DELAYS[attempt - 1]
+                if delay:
+                    log.debug(
+                        "Payload %s — retry %d/%d, backing off %.1fs",
+                        payload.id, attempt, _MAX_ATTEMPTS, delay,
+                    )
+                    await asyncio.sleep(delay)
+
+                start = time.perf_counter()
+                try:
+                    resp = await self.client.post(
+                        surface.url,
+                        json=payload_data,
+                    )
+                    latency = time.perf_counter() - start
+
+                    # Treat retryable status codes as transient failures.
+                    if resp.status_code in _RETRYABLE_STATUS:
+                        log.warning(
+                            "Payload %s → %s  status=%d (retryable), attempt %d/%d",
+                            payload.id, surface.url, resp.status_code,
+                            attempt, _MAX_ATTEMPTS,
+                        )
+                        last_exc = None  # not an exception, but still retryable
+                        continue        # go to next attempt
+
+                    log.debug(
+                        "Payload %s → %s  status=%d  latency=%.2fs",
+                        payload.id, surface.url, resp.status_code, latency,
+                    )
+
+                    result = PayloadResult(
+                        surface_url=surface.url,
+                        surface_type=surface.surface_type,
+                        payload_id=payload.id,
+                        payload_category=category,
+                        payload_text=payload.text,
+                        raw_response=resp.text,
+                        response_headers=dict(resp.headers),
+                        latency=latency,
+                        status_code=resp.status_code,
+                    )
+
+                    # Register in shared state so the analyzer can read it.
+                    self.state.add_result(result)
+                    return result
+
+                except httpx.TimeoutException as exc:
+                    latency = time.perf_counter() - start
+                    log.warning(
+                        "Timeout firing payload %s at %s (attempt %d/%d, %.2fs elapsed)",
+                        payload.id, surface.url, attempt, _MAX_ATTEMPTS, latency,
+                    )
+                    last_exc = exc
+
+                except httpx.ConnectError as exc:
+                    log.warning(
+                        "Connection error firing payload %s at %s (attempt %d/%d): %s",
+                        payload.id, surface.url, attempt, _MAX_ATTEMPTS, exc,
+                    )
+                    last_exc = exc
+
+                except httpx.HTTPError as exc:
+                    # Non-retryable HTTP errors (e.g. 4xx, protocol errors) — bail immediately.
+                    log.error("HTTP error firing payload %s: %s", payload.id, exc)
+                    return None
+
+            # All attempts exhausted.
+            if last_exc is not None:
+                log.error(
+                    "Payload %s failed after %d attempts: %s",
+                    payload.id, _MAX_ATTEMPTS, last_exc,
                 )
-                latency = time.perf_counter() - start
-
-                log.debug(
-                    "Payload %s → %s  status=%d  latency=%.2fs",
-                    payload.id, surface.url, resp.status_code, latency,
+            else:
+                # Retryable status code persisted across all attempts.
+                log.error(
+                    "Payload %s failed after %d attempts (persistent retryable status)",
+                    payload.id, _MAX_ATTEMPTS,
                 )
-
-                result = PayloadResult(
-                    surface_url=surface.url,
-                    surface_type=surface.surface_type,
-                    payload_id=payload.id,
-                    payload_category=category,
-                    payload_text=payload.text,
-                    raw_response=resp.text,
-                    response_headers=dict(resp.headers),
-                    latency=latency,
-                    status_code=resp.status_code,
-                )
-
-                # Register in shared state so the analyzer can read it.
-                self.state.add_result(result)
-                return result
-
-            except httpx.TimeoutException:
-                log.warning("Timeout firing payload %s at %s", payload.id, surface.url)
-            except httpx.HTTPError as exc:
-                log.error("HTTP error firing payload %s: %s", payload.id, exc)
-
             return None
 
     # ------------------------------------------------------------------
@@ -216,7 +285,17 @@ class PayloadEngine:
             self._execute_payload(surface, payload, category)
             for payload in payloads
         ]
-        results = await asyncio.gather(*tasks)
+        raw = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Separate real results from task exceptions.
+        # A network error on one payload must not cancel the whole batch.
+        results: list = []
+        for item in raw:
+            if isinstance(item, BaseException):
+                log.warning("Payload task raised exception: %s: %s", type(item).__name__, item)
+                results.append(None)
+            else:
+                results.append(item)
 
         fired    = sum(1 for r in results if r is not None)
         failed   = len(results) - fired

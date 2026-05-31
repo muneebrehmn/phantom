@@ -451,4 +451,16 @@ async def fingerprint_all(
         async with sem:
             return await fp.fingerprint(t)
 
-    return await asyncio.gather(*[_bounded(t) for t in targets])
+    results = await asyncio.gather(*[_bounded(t) for t in targets], return_exceptions=True)
+
+    # Filter out exceptions — a single slow/broken target shouldn't cancel the batch.
+    # Log failures so they're not silently swallowed.
+    import logging
+    _log = logging.getLogger(__name__)
+    good: list[FingerprintResult] = []
+    for i, r in enumerate(results):
+        if isinstance(r, BaseException):
+            _log.warning("Fingerprint failed for target %d: %s: %s", i, type(r).__name__, r)
+        else:
+            good.append(r)
+    return good

@@ -20,16 +20,13 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-# These imports are inside the module — no circular dependency because
-# findings.py and this file are siblings in core/.
 from phantom.core.findings import Finding
 
+if TYPE_CHECKING:
+    from phantom.discovery.classifier import ClassifiedSurface
 
-# ---------------------------------------------------------------------------
-# PayloadResult — raw result of one payload execution
-# ---------------------------------------------------------------------------
 
 @dataclass
 class PayloadResult:
@@ -63,10 +60,6 @@ class PayloadResult:
     timestamp: float = field(default_factory=time.time)
 
 
-# ---------------------------------------------------------------------------
-# SessionState — the shared mutable store for a full scan
-# ---------------------------------------------------------------------------
-
 class SessionState:
     """
     Shared, append-only state for a single Phantom scan session.
@@ -82,9 +75,8 @@ class SessionState:
         self.start_time: float = time.time()
 
         # Discovered and classified AI surfaces.
-        # Key = surface URL, value = ClassifiedSurface (imported lazily
-        # to avoid a circular import chain at module level).
-        self.surfaces: Dict[str, object] = {}
+        # Key = surface URL, value = ClassifiedSurface
+        self.surfaces: Dict[str, Any] = {}
 
         # All raw payload execution results (one per payload per surface)
         self.results: List[PayloadResult] = []
@@ -96,40 +88,85 @@ class SessionState:
         # Confirmed findings produced by the analyzer layer.
         self.findings: List[Finding] = []
 
+        # MultiTurnResult records -- one per surface x payload attempted.
+        self.multi_turn_results: List[Any] = []
+
+        # AdaptiveSession records — one per surface x goal attempted.
+        # Stored as Any to avoid circular import with adaptive.py.
+        self.adaptive_sessions: List[Any] = []
+
     # ------------------------------------------------------------------
     # Mutation helpers
     # ------------------------------------------------------------------
 
-    def add_surface(self, surface: object) -> None:
+    def add_surface(self, surface: ClassifiedSurface) -> None:
         """
         Register a ClassifiedSurface in the session.
         Using the URL as key deduplicates re-visits to the same endpoint.
+
+        Args:
+            surface: ClassifiedSurface object to register
+
+        Raises:
+            ValueError: If surface has no URL
         """
-        # Avoid importing ClassifiedSurface at the top to prevent circular
-        # imports (classifier.py imports from core/, not the other way round).
-        url = getattr(surface, "url", None) or getattr(surface, "fingerprint", {})
-        if hasattr(url, "url"):
-            url = url.url
+        if surface is None:
+            raise ValueError("Cannot add None surface to session state")
+
+        url = getattr(surface, "url", None)
+        if not url:
+            raise ValueError(f"Surface has no URL: {surface}")
+
         self.surfaces[str(url)] = surface
 
     def add_result(self, result: PayloadResult) -> None:
         """Append a raw payload result for later analysis."""
+        if result is None:
+            raise ValueError("Cannot add None result to session state")
         self.results.append(result)
 
     def set_baseline(self, url: str, response: str) -> None:
         """
         Store the 'clean' response for a surface before any payloads are fired.
         The analyzer uses this as the reference to detect deviations.
+
+        Args:
+            url: Surface URL
+            response: Response text to store as baseline
         """
+        if not url:
+            raise ValueError("Cannot set baseline for empty URL")
         self.baselines[url] = response
 
     def get_baseline(self, url: str) -> Optional[str]:
         """Retrieve the baseline for a URL, or None if not captured."""
         return self.baselines.get(url)
 
+    def has_surface(self, url: str) -> bool:
+        """Check if a surface has been registered for this URL."""
+        return url in self.surfaces
+
+    def get_surface(self, url: str) -> Optional[Any]:
+        """Retrieve a surface by URL, or None if not found."""
+        return self.surfaces.get(url)
+
     def add_finding(self, finding: Finding) -> None:
         """Record a confirmed vulnerability produced by the analyzer."""
+        if finding is None:
+            raise ValueError("Cannot add None finding to session state")
         self.findings.append(finding)
+
+    def add_adaptive_session(self, session: Any) -> None:
+        """Record an AdaptiveSession produced by the adaptive engine."""
+        if session is None:
+            raise ValueError("Cannot add None adaptive session to session state")
+        self.adaptive_sessions.append(session)
+
+    def add_multi_turn_result(self, result: Any) -> None:
+        """Record a MultiTurnResult produced by the multi-turn orchestrator."""
+        if result is None:
+            raise ValueError("Cannot add None multi-turn result to session state")
+        self.multi_turn_results.append(result)
 
     # ------------------------------------------------------------------
     # Query helpers
@@ -139,7 +176,7 @@ class SessionState:
         """Return findings sorted CRITICAL → INFO (most severe first)."""
         return sorted(self.findings, key=lambda f: f.severity.order)
 
-    def summary(self) -> Dict:
+    def summary(self) -> Dict[str, Any]:
         """
         High-level overview dict — written to the report header and printed
         to the terminal at the end of the scan.

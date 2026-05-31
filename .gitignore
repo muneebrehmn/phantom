@@ -1,0 +1,60 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# OS
+.DS_Store
+.env
+.env.local
+
+# Project-specific
+phantom_output/
+benchmark_output/
+*.log
+
+# Don't track reports or benchmarks in repo
+BENCHMARK_*.md
+BENCHMARK_*.json
+*BENCHMARK*.py
+PROJECT_OVERVIEW.md
+TECHNICAL_REFERENCE.md
+DOCUMENTATION_INDEX.md
+EXAMPLES.md
+
+# Demo/Test reports
+demo/output/
+demo/results/

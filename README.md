@@ -1,334 +1,346 @@
-# Phantom
+# Phantom — Prompt Injection Reconnaissance & Exploitation Framework
 
-**Elite-level prompt injection reconnaissance and exploitation framework for AI-powered web applications.**
+**Automated security testing framework for discovering and exploiting prompt injection vulnerabilities in LLM-powered applications.**
 
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![Tests](https://img.shields.io/badge/tests-57%20passing-brightgreen.svg)](tests/)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-
-Phantom automatically discovers, fingerprints, classifies, and exploits AI surfaces across web applications using 163 research-backed injection techniques spanning 12 attack categories.
-
-![Phantom Pipeline](docs/pipeline.svg)
+Scan web applications and APIs to find what LLMs are protecting—and whether user input can bypass those protections.
 
 ---
 
-## ⚡ Quick Start
+## What Phantom Does
+
+Phantom automates the reconnaissance loop:
+
+```
+CRAWL → FINGERPRINT → CLASSIFY → ATTACK → ANALYZE → REPORT
+```
+
+1. **Discovery** — Crawl target, identify AI surfaces (chat endpoints, completions, etc.)
+2. **Fingerprinting** — Classify each endpoint (chatbot? API? Integration?)
+3. **Classification** — Detect attack vectors (direct override? role confusion? encoding bypass?)
+4. **Attack** — Fire 588 payloads across 16 attack vectors systematically
+5. **Analysis** — Detect successful attacks using regex + semantic analysis
+6. **Reporting** — Generate findings in Markdown, JSON, and HTML
+
+---
+
+## Features
+
+✅ **588-Payload Library** — 16 attack vectors (jailbreak, role confusion, system prompt leak, etc.)  
+✅ **Multilingual Payloads** — Arabic, Chinese, Spanish, French, Russian, Japanese primers  
+✅ **Semantic Analysis** — ML-based response classification (refusal vs compliance)  
+✅ **SPA Detection** — Automatic Playwright fallback for React/Vue/Angular apps  
+✅ **Rate Limiting** — Respectful token-bucket rate limiter  
+✅ **Concurrency** — Async workers with configurable parallelism  
+✅ **Pre-configured Profiles** — Quick / Bug Bounty / Research / Stealth / Thorough  
+✅ **Standardized Reporting** — PTES-aligned, CVSS-scored findings  
+
+---
+
+## Installation
 
 ```bash
-# Clone the repository
-git clone https://github.com/yourusername/phantom.git
+# Clone
+git clone https://github.com/muneebrehmn/phantom
 cd phantom
 
-# Install dependencies
+# Install
 pip install -r requirements.txt
 
-# Run a scan
-python phantom.py scan https://target-ai-app.com
-```
+# Optional: Semantic analysis (recommended)
+pip install sentence-transformers
 
-**Output:** Professional pentest report in `phantom_output/`
-
----
-
-## 🎯 What Phantom Does
-
-Phantom executes a five-phase security assessment pipeline:
-
-1. **🕷️ Crawl** - Async web crawler discovers all endpoints (respects robots.txt, enforces scope)
-2. **🔍 Fingerprint** - Multi-signal detection identifies AI surfaces (URL patterns, JSON keys, streaming, latency)
-3. **🏷️ Classify** - Maps surfaces to attack vectors (chatbox, search, document summarizer, code assistant, etc.)
-4. **💣 Attack** - Fires 163 payloads across 12 categories with adaptive generation
-5. **📊 Report** - Generates professional Markdown + JSON reports with PoC reproduction steps
-
----
-
-## 🚀 Features
-
-### 🎯 **163 Research-Backed Payloads**
-
-| Category | Count | Techniques |
-|----------|-------|------------|
-| Direct Injection | 12 | System message spoofing, ChatML tag injection, code-block framing |
-| Jailbreaks | 12 | DAN evolution, dual-output, medical accessibility exploits |
-| System Prompt Leak | 15 | Translation tricks, regex construction, hash verification |
-| Role Confusion | 12 | Debug mode personas, temporal displacement, shadow-self |
-| Indirect Injection | 15 | Email/CSV/JSON poisoning, hidden instructions in data |
-| Encoding Bypass | 18 | Base64, ROT13, hex, unicode, morse code, QR codes |
-| Context Poisoning | 15 | Multi-turn attacks, mode establishment, profile injection |
-| Exfiltration | 15 | Logging footers, metadata headers, audit log injection |
-| **Multi-Modal** 🆕 | 15 | OCR injection, image-based prompts, audio attacks, captcha spoofs |
-| **Tool Exploits** 🆕 | 12 | Function calling hijacking, API manipulation, database access |
-| **Adversarial Suffixes** 🆕 | 10 | GCG universal attacks, transfer learning, gradient-based |
-| **Memory Poisoning** 🆕 | 12 | RAG injection, project memory attacks, workflow poisoning |
-
-### 🧠 **Adaptive Generation Engine**
-
-- **Encoding transformations**: Automatically applies 6 encoding schemes to evade filters
-- **Contextual framing**: Wraps payloads in 5 different contexts (academic, technical, compliance, etc.)
-- **Attack chaining**: Combines 2-5 payloads into multi-turn coordinated attacks
-- **Refusal learning**: Analyzes why payloads failed and generates targeted bypasses
-
-### 📈 **Professional Reporting**
-
-- **Markdown reports**: Executive summary, findings by severity, PoC reproduction
-- **JSON export**: Machine-readable format for CI/CD integration
-- **Severity classification**: CRITICAL → HIGH → MEDIUM → LOW → INFO
-- **PoC generation**: Ready-to-run curl commands and Python scripts
-
----
-
-## 📦 Installation
-
-### Prerequisites
-
-- Python 3.10 or higher
-- `pip` package manager
-
-### Standard Installation
-
-```bash
-# Clone repository
-git clone https://github.com/yourusername/phantom.git
-cd phantom
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Verify installation
-python phantom.py --help
-```
-
-### Development Installation
-
-```bash
-# Install with test dependencies
-pip install -r requirements.txt
-pip install pytest pytest-asyncio
-
-# Run test suite
-pytest tests/ -v
-
-# Expected: 57 tests passing
+# Optional: SPA rendering
+pip install playwright && playwright install chromium
 ```
 
 ---
 
-## 🎮 Usage
+## Quick Start
 
-### Basic Scan
+### Scan a Target
 
 ```bash
-python phantom.py scan https://target.com
+# Basic scan
+python phantom.py scan https://example.com
+
+# Quick recon (5 payloads, ~5 min)
+python phantom.py scan https://example.com --profile quick
+
+# Thorough assessment (588 payloads, ~2 hours)
+python phantom.py scan https://example.com --profile research
+
+# Specific endpoint (skip crawling)
+python phantom.py scan https://example.com/api/chat --assume-ai-surface
 ```
 
-### Discovery Only (No Payloads)
+### Try the Demo
 
 ```bash
-python phantom.py discover https://target.com
+# Start vulnerable Flask chatbot
+python demo/demo_target.py &
+
+# Run Phantom against it
+python phantom.py scan http://localhost:5000/api/chat --assume-ai-surface --profile quick
+
+# View results
+open phantom_output/report.html
 ```
 
-### Advanced Options
+---
+
+## Scan Profiles
+
+| Profile | Payloads | Depth | Time | Use Case |
+|---------|----------|-------|------|----------|
+| `quick` | ~50 | 2 | 5 min | Fast recon |
+| `bug_bounty` | ~150 | 3 | 30 min | Thorough test |
+| `research` | 588 | 5 | 2 hours | Complete coverage |
+| `stealth` | ~50 | 1 | 1 hour | Undetectable |
+| `thorough` | ~400 | 5 | 1.5 hours | Deep analysis |
+
+---
+
+## Usage Examples
+
+### Custom Configuration
 
 ```bash
-# Deep scan with adaptive generation
-python phantom.py scan https://target.com \
+python phantom.py scan https://example.com \
   --depth 5 \
-  --max-pages 200 \
-  --adaptive \
-  --formats markdown json
-
-# Target specific attack categories
-python phantom.py scan https://target.com \
-  --categories direct jailbreak system_prompt_leak
-
-# Fast scan (skip baseline, higher concurrency)
-python phantom.py scan https://target.com \
-  --no-baseline \
+  --max-pages 100 \
   --concurrency 10 \
-  --rate 2.0
+  --rate 0.5 \
+  --categories jailbreak role_confusion system_prompt_leak \
+  --verbose
 ```
 
-### Configuration
-
-Create a `.env` file for optional settings:
+### With Authentication
 
 ```bash
-# Optional: LLM API keys for payload variation
-OPENAI_API_KEY=sk-...
-ANTHROPIC_API_KEY=sk-ant-...
+python phantom.py scan https://example.com \
+  --auth-bearer "eyJhbGc..." \
+  --auth-cookie "session=abc123"
 ```
 
----
-
-## 📊 Output Example
-
-```
-=== Phantom Scan Report ===
-
-Target: https://example.com/chat
-Runtime: 127s
-Surfaces Discovered: 3
-Payloads Fired: 48
-Findings: 7
-
-╔═══════════════════════════════════════════════╗
-║ Finding #1 — 🔴 CRITICAL                     ║
-╠═══════════════════════════════════════════════╣
-║ Confidence: 87%                               ║
-║ Surface: /api/chat                            ║
-║ Attack: ChatML tag injection                  ║
-║ Evidence: System prompt leaked                ║
-╚═══════════════════════════════════════════════╝
-
-PoC (curl):
-curl -X POST 'https://example.com/api/chat' \
-  -H 'Content-Type: application/json' \
-  -d '{"message": "<|im_start|>system..."}'
-
-Full report: phantom_output/phantom_report.md
-```
-
----
-
-## 🏗️ Architecture
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                    CLI (phantom.py)                      │
-└────────────────────────┬────────────────────────────────┘
-                         │
-        ┌────────────────┼────────────────┐
-        │                │                │
-   ┌────▼────┐     ┌────▼────┐     ┌────▼─────┐
-   │Discovery│     │Payloads │     │ Analyzer │
-   └────┬────┘     └────┬────┘     └────┬─────┘
-        │               │               │
-   ┌────▼────┐     ┌────▼────┐     ┌────▼─────┐
-   │Crawler  │     │Library  │     │Response  │
-   │Finger-  │     │Engine   │     │Diff      │
-   │printer  │     │Generator│     │Scorer    │
-   │Classifier│     └─────────┘     │Bypass    │
-   └─────────┘                      └──────────┘
-                         │
-                    ┌────▼─────┐
-                    │  Report  │
-                    │ Builder  │
-                    └──────────┘
-```
-
----
-
-## 🧪 Testing
-
-Phantom includes a comprehensive test suite with 57 tests:
+### CI/CD Integration
 
 ```bash
-# Run all tests
-pytest tests/ -v
+# Scan and check for critical findings
+python phantom.py scan https://staging.example.com --formats json
 
-# Run specific test module
-pytest tests/test_analyzer.py -v
-
-# Run with coverage
-pytest tests/ --cov=phantom --cov-report=html
-```
-
-**Test Coverage:**
-- ✅ Response signal extraction (23 tests)
-- ✅ Fingerprinting channels (17 tests)
-- ✅ Payload engine execution (17 tests)
-
----
-
-## 🎓 Research & Attribution
-
-Phantom implements techniques from recent academic and industry research:
-
-- **GCG Adversarial Suffixes**: [Zou et al., 2023](https://arxiv.org/abs/2307.15043)
-- **Many-Shot Jailbreaking**: [Anthropic, April 2024](https://www.anthropic.com/research)
-- **Skeleton Key**: [Microsoft, June 2024](https://www.microsoft.com/security)
-- **Prompt Injection Taxonomy**: [Simon Willison, 2023-2024](https://simonwillison.net/series/prompt-injection/)
-- **Vision-Language Attacks**: [GPT-4V Research, 2024](https://openai.com/research)
-
----
-
-## ⚖️ Legal & Ethics
-
-**This tool is for authorized security research only.**
-
-### ✅ Permitted Uses
-
-- Penetration testing with written authorization
-- Security research on your own systems
-- Academic research with proper IRB approval
-- Responsible disclosure programs
-
-### ❌ Prohibited Uses
-
-- Unauthorized testing of third-party systems
-- Malicious attacks or exploitation
-- Violation of computer fraud laws
-- Bypassing security for personal gain
-
-**By using Phantom, you agree to:**
-1. Obtain proper authorization before testing any system
-2. Follow responsible disclosure practices
-3. Comply with all applicable laws and regulations
-4. Use findings to improve security, not cause harm
-
-The authors assume no liability for misuse of this tool.
-
----
-
-## 🤝 Contributing
-
-Contributions welcome! Please follow these guidelines:
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/new-attack`)
-3. Add tests for new functionality
-4. Ensure all tests pass (`pytest tests/`)
-5. Submit a pull request
-
-**Areas for contribution:**
-- New payload categories
-- Additional attack techniques
-- Performance improvements
-- Documentation enhancements
-
----
-
-## 📄 License
-
-MIT License - see [LICENSE](LICENSE) file for details.
-
----
-
-## 📧 Contact
-
-**Author**: [Your Name]  
-**Email**: your.email@example.com  
-**Project**: Final Year Security Research  
-**Institution**: [Your University]
-
-**Citation:**
-```bibtex
-@software{phantom2026,
-  title={Phantom: Automated Prompt Injection Assessment Framework},
-  author={Your Name},
-  year={2026},
-  url={https://github.com/yourusername/phantom}
-}
+# Fail if critical findings detected
+python -c "import json; f=json.load(open('phantom_output/report.json')); \
+  exit(any(x['severity']=='CRITICAL' for x in f.get('findings', [])))"
 ```
 
 ---
 
-## 🙏 Acknowledgments
+## Output Formats
 
-- OpenAI, Anthropic, Google for documenting AI vulnerabilities
-- Security researchers who publish prompt injection techniques
-- Open-source community for Python security tools
+Phantom generates three report formats:
+
+- **Markdown** — Human-readable summary with findings and remediation
+- **JSON** — Machine-parseable for integration with SIEM/scanners
+- **HTML** — Interactive dashboard with payload explorer
 
 ---
 
-**⚠️ Use responsibly. Test ethically. Build securely.**
+## How It Works
+
+### Phase 1: Discovery (Crawl)
+- Crawls target from seed URL
+- Detects SPA frameworks (React, Vue, Angular)
+- Extracts forms and endpoints
+- **Output:** 50+ crawled pages/forms
+
+### Phase 2: Fingerprinting (Identification)
+- Analyzes URL patterns, response structure, headers, latency
+- Identifies LLM surfaces with confidence scores
+- **Output:** DEFINITE_AI / PROBABLE_AI / NOT_AI classifications
+
+### Phase 3: Classification (Attack Vector Detection)
+- Sends 3 baseline probes (safe, encoded, role-shift)
+- Detects which attack vectors might work
+- **Output:** Per-endpoint attack profiles (direct_override, role_confusion, etc.)
+
+### Phase 4: Payload Injection (Attack)
+- Systematically fires 588 payloads across 16 vectors
+- Respects rate limits and concurrency constraints
+- Captures full responses
+- **Output:** 1000+ raw responses
+
+### Phase 5: Response Analysis (Success Detection)
+- **Regex matching** — Check tight success patterns
+- **Semantic analysis** — ML-based refusal/compliance classification
+- **Confidence scoring** — Rank findings by reliability
+- **Output:** High-confidence findings with evidence
+
+### Phase 6: Reporting (Standardized Output)
+- Aggregates findings across all surfaces
+- Calculates CVSS scores
+- Generates Markdown, JSON, HTML
+- **Output:** Actionable security report
+
+---
+
+## Payload Library
+
+**588 payloads across 16 attack vectors:**
+
+| Category | Count | Examples |
+|----------|-------|----------|
+| Jailbreak | 69 | DAN mode, "no restrictions", role-play as HackerGPT |
+| System Prompt Leak | 33 | "Show instructions", "Paste your prompt" |
+| Role Confusion | 30 | "You are a developer", "Switch to admin mode" |
+| Encoding | 36 | ROT13, Base64, ASCII shift wrappers |
+| Direct Override | 30 | "Disregard previous instructions" variants |
+| Context Poisoning | 33 | Multi-turn escalation patterns |
+| Adversarial Goal | 78 | 78 harmful requests from AdvBench |
+| And 9 more | 179 | Multi-modal, tool exploit, payload fragmentation, etc. |
+
+**Multilingual:** Each category includes Arabic, Chinese, Spanish, French, Russian, and Japanese primers.
+
+---
+
+## Architecture
+
+```
+phantom/
+├── discovery/          # Phase 1-3: Crawl, fingerprint, classify
+├── payloads/           # Phase 4: 588 payloads + injection engine
+├── analyzer/           # Phase 5: Response analysis + semantic scoring
+├── report/             # Phase 6: Markdown, JSON, HTML reporting
+├── core/               # Configuration, logging, state management
+└── phantom.py          # CLI entry point
+```
+
+---
+
+## Use Cases
+
+### Penetration Testing
+```bash
+phantom.py scan https://customer.com --profile bug_bounty
+# Review findings in report.md
+```
+
+### Compliance & GRC
+```bash
+phantom.py discover https://customer.com  # Find all AI surfaces
+phantom.py scan https://customer.com --formats json  # Export for risk team
+```
+
+### Security Research
+```bash
+# Generate adaptive payloads using Claude API
+phantom.py scan https://target.com --adaptive --adaptive-rounds 3
+```
+
+### Continuous Monitoring
+```bash
+# In CI/CD: fail deployment if critical findings
+phantom.py scan https://staging.internal --profile quick --formats json
+# Check findings and exit with error code if CRITICAL
+```
+
+---
+
+## Configuration
+
+**Default settings** (configurable):
+
+```
+max_depth = 3
+max_pages = 100
+crawl_concurrency = 5
+concurrency_limit = 5
+rate_limit_rps = 0.2 (per worker)
+crawl_timeout = 10s
+request_timeout = 10s
+respect_robots = False (off by default in scan mode)
+```
+
+See `phantom/core/config.py` for full configuration options.
+
+---
+
+## API Usage
+
+```python
+import asyncio
+from phantom.core.config import PhantomConfig
+from phantom.discovery.crawler import Crawler
+from phantom.payloads.engine import PayloadEngine
+from phantom.analyzer.response import ResponseAnalyzer
+
+async def scan(url):
+    config = PhantomConfig().with_target(url)
+    
+    # Crawl
+    crawler = Crawler(config)
+    targets = await crawler.crawl()
+    
+    # Attack
+    engine = PayloadEngine(config)
+    results = await engine.attack(targets)
+    
+    # Analyze
+    analyzer = ResponseAnalyzer(config)
+    findings = analyzer.analyze(results)
+    
+    return findings
+
+# Run
+findings = asyncio.run(scan("https://example.com"))
+```
+
+---
+
+## Requirements
+
+- Python 3.10+
+- httpx (async HTTP client)
+- flask (for demo)
+- sentence-transformers (optional, for semantic analysis)
+- playwright (optional, for SPA rendering)
+
+See `requirements.txt` for full dependency list.
+
+---
+
+## License & Disclaimer
+
+**Use:** Authorized security testing, defensive research, CTFs, educational contexts only.
+
+**Not for:** Destructive attacks, DoS, supply chain compromise, malicious detection evasion.
+
+---
+
+## Contributing
+
+Contributions welcome. Please ensure:
+- Code follows existing style
+- New payloads include proper metadata (id, description, success_pattern)
+- All changes are tested
+
+---
+
+## Support
+
+- **Issues:** GitHub issue tracker
+- **Questions:** GitHub discussions
+- **Contributing:** Pull requests welcome
+
+---
+
+## Roadmap
+
+- [ ] Production model testing (GPT-4, Claude, Gemini benchmarks)
+- [ ] Automated exploitation chains
+- [ ] Defense synthesis (generate robust system prompts)
+- [ ] Cost analysis (measure API spend per scan)
+- [ ] Team collaboration (shared findings storage)
+
+---
+
+**Made with ⚔️ for security research**

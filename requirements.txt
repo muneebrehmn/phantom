@@ -2,17 +2,27 @@
 # Python 3.10+ required
 
 # Core HTTP client
-httpx>=0.27.0
+httpx==0.27.0
+
+# HTML/XML parsing
+beautifulsoup4==4.12.3
 
 # Environment configuration
-python-dotenv>=1.0.0
+python-dotenv==1.0.1
 
 # Terminal output formatting
-rich>=13.7.0
+rich==13.7.1
 
 # Testing framework (dev dependency)
-pytest>=8.0.0
-pytest-asyncio>=0.23.0
+pytest==8.0.2
+pytest-asyncio==0.23.3
+pytest-cov==4.1.0
+
+# Code quality tools (dev dependency)
+black==24.1.1
+isort==5.13.2
+ruff==0.2.0
+mypy==1.7.1
 
 # Optional: For enhanced reporting (uncomment if needed)
 # markdown>=3.5.0
@@ -20,6 +30,6 @@ pytest-asyncio>=0.23.0
 
 # LLM clients for mutation engine and benchmark suite (optional)
 # Uncomment the ones you need:
-# openai>=1.0.0           # For GPT-4 benchmarking and mutation
-# anthropic>=0.21.0       # For Claude benchmarking and mutation
-# google-generativeai>=0.3.0  # For Gemini benchmarking
+# openai==1.3.0           # For GPT-4 benchmarking and mutation
+# anthropic==0.21.0       # For Claude benchmarking and mutation
+# google-generativeai==0.3.0  # For Gemini benchmarking

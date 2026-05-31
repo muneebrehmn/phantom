@@ -29,6 +29,7 @@ from pathlib import Path
 from phantom.core.config import PhantomConfig
 from phantom.core.logger import get_logger
 from phantom.core.state import SessionState
+from phantom.report.cvss import score_finding
 
 log = get_logger(__name__)
 
@@ -70,10 +71,19 @@ class JsonExporter:
         summary = self.state.summary()
         findings = self.state.findings_by_severity()
 
+        # Attach CVSSv3.1 scores before serialising so the fields are
+        # populated in to_dict() output (cvss_vector, cvss_base_score, cvss_severity)
+        for f in findings:
+            cvss = score_finding(f.payload_category)
+            f.cvss_vector     = cvss.vector_string
+            f.cvss_base_score = cvss.base_score
+            f.cvss_severity   = cvss.severity_label
+
         return {
             "meta": {
                 "tool": "Phantom",
                 "version": "0.1",
+                "standard": "NIST SP 800-115 / PTES / CVSSv3.1",
                 "generated_at": datetime.now().isoformat(timespec="seconds"),
                 "target": self.config.target_url,
                 "scan_config": {
@@ -84,7 +94,18 @@ class JsonExporter:
                     "fingerprint_latency_samples": self.config.fingerprint_latency_samples,
                 },
             },
-            "summary": summary,
+            "summary": {
+                **summary,
+                "max_cvss_base_score": max((f.cvss_base_score for f in findings), default=0.0),
+                "cvss_severity": (
+                    max(
+                        findings,
+                        key=lambda f: f.cvss_base_score,
+                        default=None,
+                    ).cvss_severity
+                    if findings else "None"
+                ),
+            },
             "findings": [f.to_dict() for f in findings],
             "surfaces": self._serialize_surfaces(),
         }

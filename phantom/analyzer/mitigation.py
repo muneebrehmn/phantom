@@ -65,9 +65,9 @@ class MitigationAdvisor:
 import re
 
 INJECTION_PATTERNS = [
-    r'ignore\s+(all\s+)?(previous|prior)\s+instructions',
-    r'(show|reveal|display)\s+(your\s+)?(system\s+)?(prompt|instructions)',
-    r'disregard\s+(all\s+)?safety',
+    r'ignore\\s+(all\\s+)?(previous|prior)\\s+instructions',
+    r'(show|reveal|display)\\s+(your\\s+)?(system\\s+)?(prompt|instructions)',
+    r'disregard\\s+(all\\s+)?safety',
 ]
 
 def validate_input(user_input: str) -> bool:

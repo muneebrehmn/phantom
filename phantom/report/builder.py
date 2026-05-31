@@ -28,6 +28,7 @@ from phantom.core.state import SessionState
 from phantom.report.html_builder import generate_html_report
 from phantom.report.json_export import JsonExporter
 from phantom.report.markdown import MarkdownExporter
+from phantom.report.sarif import SarifExporter
 
 log = get_logger(__name__)
 
