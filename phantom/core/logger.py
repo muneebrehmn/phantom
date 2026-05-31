@@ -134,6 +134,7 @@ def print_banner() -> None:
         "[bold magenta]  ██║     ██║  ██║██║  ██║██║ ╚███║   ██║   ╚██████╔╝██║ ╚═╝ ██║[/]\n"
         "[bold magenta]  ╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚══╝   ╚═╝    ╚═════╝ ╚═╝     ╚═╝[/]\n"
         "[dim]  Prompt Injection Exploitation Framework  •  v0.1[/]\n"
+        "[dim]  ▓▓ SAEEN  ·  KERNEL SECURITY  —  break things responsibly.[/]\n"
     )
 
 
