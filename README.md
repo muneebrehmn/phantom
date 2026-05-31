@@ -339,21 +339,5 @@ Contributions welcome. Please ensure:
 
 ---
 
-## Support
 
-- **Issues:** GitHub issue tracker
-- **Questions:** GitHub discussions
-- **Contributing:** Pull requests welcome
-
----
-
-## Roadmap
-
-- [ ] Production model testing (GPT-4, Claude, Gemini benchmarks)
-- [ ] Automated exploitation chains
-- [ ] Defense synthesis (generate robust system prompts)
-- [ ] Cost analysis (measure API spend per scan)
-- [ ] Team collaboration (shared findings storage)
-
----
 
