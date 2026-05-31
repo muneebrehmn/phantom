@@ -1,6 +1,6 @@
 MIT License
 
-Copyright (c) 2026 [Your Name]
+Copyright (c) 2026 SAEEN · Kernel Security
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -19,30 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
----
-
-DISCLAIMER:
-
-This tool is designed for authorized security research and penetration testing
-only. Users are solely responsible for ensuring they have proper authorization
-before testing any system. Unauthorized access to computer systems is illegal
-and may result in criminal prosecution.
-
-The authors and contributors assume no liability for misuse of this software
-or for any damages resulting from its use. By using this software, you agree
-to use it responsibly and in compliance with all applicable laws and regulations.
-
-This tool should only be used:
-- On systems you own
-- On systems you have written authorization to test
-- As part of approved bug bounty or responsible disclosure programs
-- For academic research with proper institutional approval
-
-Users must:
-- Obtain proper authorization before testing
-- Follow responsible disclosure practices
-- Respect scope limitations and terms of service
-- Comply with all applicable laws
-
-Use at your own risk.

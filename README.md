@@ -1,3 +1,6 @@
+<<<<<<< HEAD
+# phantom
+=======
 # Phantom — Prompt Injection Reconnaissance & Exploitation Framework
 
 **Automated security testing framework for discovering and exploiting prompt injection vulnerabilities in LLM-powered applications.**
@@ -342,5 +345,9 @@ Contributions welcome. Please ensure:
 - [ ] Team collaboration (shared findings storage)
 
 ---
+---
 
-**Made with ⚔️ for security research**
+<pre>
+▓▓ SAEEN  ·  KERNEL SECURITY
+break things responsibly.
+</pre>
