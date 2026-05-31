@@ -39,6 +39,7 @@ def make_config() -> PhantomConfig:
         rate_limit_rps=100.0,   # High rate in tests — don't want real sleep delays
         request_timeout=5.0,
         concurrency_limit=2,
+        _testing=True,          # Bypasses rate_limit_rps > 10 validation
     ).with_target("https://example.com")
 
 
@@ -305,4 +306,222 @@ class TestPayloadExecution:
         assert result.surface_type    == "chatbox"
         assert result.status_code     == 200
         assert result.latency         >= 0.0
+        await engine.close()
+
+# ---------------------------------------------------------------------------
+# Retry logic tests
+# ---------------------------------------------------------------------------
+
+class TestRetryLogic:
+    """Tests for exponential backoff retry behaviour in _execute_payload."""
+
+    @pytest.mark.asyncio
+    async def test_timeout_retried_then_succeeds(self):
+        """Two timeouts followed by a success should return a valid result."""
+        config  = make_config()
+        state   = make_state()
+        engine  = PayloadEngine(config, state)
+        surface = make_surface()
+        payload = make_payload()
+
+        mock_baseline = make_mock_response("Hello!")
+        mock_success  = make_mock_response('{"response": "ok"}')
+
+        call_count = 0
+
+        async def flaky_post(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count < 3:
+                raise httpx.TimeoutException("timeout")
+            return mock_success
+
+        with patch.object(engine.client, "get", new_callable=AsyncMock, return_value=mock_baseline):
+            with patch.object(engine.client, "post", new_callable=AsyncMock, side_effect=flaky_post):
+                with patch("asyncio.sleep", new_callable=AsyncMock):  # skip real delays
+                    results = await engine.run(surface, [payload], category="direct")
+
+        assert len(results) == 1
+        assert results[0] is not None
+        assert len(state.results) == 1
+        assert call_count == 3  # 2 timeouts + 1 success
+        await engine.close()
+
+    @pytest.mark.asyncio
+    async def test_connect_error_retried_then_succeeds(self):
+        """A ConnectError followed by a success should return a valid result."""
+        config  = make_config()
+        state   = make_state()
+        engine  = PayloadEngine(config, state)
+        surface = make_surface()
+        payload = make_payload()
+
+        mock_baseline = make_mock_response("Hello!")
+        mock_success  = make_mock_response('{"response": "ok"}')
+
+        call_count = 0
+
+        async def flaky_post(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise httpx.ConnectError("connection refused")
+            return mock_success
+
+        with patch.object(engine.client, "get", new_callable=AsyncMock, return_value=mock_baseline):
+            with patch.object(engine.client, "post", new_callable=AsyncMock, side_effect=flaky_post):
+                with patch("asyncio.sleep", new_callable=AsyncMock):
+                    results = await engine.run(surface, [payload], category="direct")
+
+        assert results[0] is not None
+        assert call_count == 2
+        await engine.close()
+
+    @pytest.mark.asyncio
+    async def test_503_retried_then_succeeds(self):
+        """HTTP 503 followed by a 200 should return a valid result."""
+        config  = make_config()
+        state   = make_state()
+        engine  = PayloadEngine(config, state)
+        surface = make_surface()
+        payload = make_payload()
+
+        mock_baseline = make_mock_response("Hello!")
+        mock_503      = make_mock_response("Service Unavailable", status_code=503)
+        mock_200      = make_mock_response('{"response": "ok"}', status_code=200)
+
+        call_count = 0
+
+        async def flaky_post(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            return mock_503 if call_count == 1 else mock_200
+
+        with patch.object(engine.client, "get", new_callable=AsyncMock, return_value=mock_baseline):
+            with patch.object(engine.client, "post", new_callable=AsyncMock, side_effect=flaky_post):
+                with patch("asyncio.sleep", new_callable=AsyncMock):
+                    results = await engine.run(surface, [payload], category="direct")
+
+        assert results[0] is not None
+        assert results[0].status_code == 200
+        assert call_count == 2
+        await engine.close()
+
+    @pytest.mark.asyncio
+    async def test_all_attempts_exhausted_returns_none(self):
+        """Three consecutive timeouts should exhaust retries and return None."""
+        config  = make_config()
+        state   = make_state()
+        engine  = PayloadEngine(config, state)
+        surface = make_surface()
+        payload = make_payload()
+
+        mock_baseline = make_mock_response("Hello!")
+
+        with patch.object(engine.client, "get", new_callable=AsyncMock, return_value=mock_baseline):
+            with patch.object(
+                engine.client, "post",
+                new_callable=AsyncMock,
+                side_effect=httpx.TimeoutException("timeout"),
+            ):
+                with patch("asyncio.sleep", new_callable=AsyncMock):
+                    results = await engine.run(surface, [payload], category="direct")
+
+        assert results == [None]
+        assert len(state.results) == 0
+        await engine.close()
+
+    @pytest.mark.asyncio
+    async def test_persistent_503_exhausts_retries(self):
+        """Three consecutive 503s should exhaust retries and return None."""
+        config  = make_config()
+        state   = make_state()
+        engine  = PayloadEngine(config, state)
+        surface = make_surface()
+        payload = make_payload()
+
+        mock_baseline = make_mock_response("Hello!")
+        mock_503      = make_mock_response("Service Unavailable", status_code=503)
+
+        call_count = 0
+
+        async def always_503(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            return mock_503
+
+        with patch.object(engine.client, "get", new_callable=AsyncMock, return_value=mock_baseline):
+            with patch.object(engine.client, "post", new_callable=AsyncMock, side_effect=always_503):
+                with patch("asyncio.sleep", new_callable=AsyncMock):
+                    results = await engine.run(surface, [payload], category="direct")
+
+        assert results == [None]
+        assert call_count == 3   # exactly _MAX_ATTEMPTS
+        assert len(state.results) == 0
+        await engine.close()
+
+    @pytest.mark.asyncio
+    async def test_non_retryable_http_error_bails_immediately(self):
+        """A non-retryable HTTPError (e.g. 404) should not be retried."""
+        config  = make_config()
+        state   = make_state()
+        engine  = PayloadEngine(config, state)
+        surface = make_surface()
+        payload = make_payload()
+
+        mock_baseline = make_mock_response("Hello!")
+
+        call_count = 0
+
+        async def http_error_post(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            raise httpx.HTTPStatusError(
+                "404 Not Found",
+                request=MagicMock(),
+                response=MagicMock(),
+            )
+
+        with patch.object(engine.client, "get", new_callable=AsyncMock, return_value=mock_baseline):
+            with patch.object(engine.client, "post", new_callable=AsyncMock, side_effect=http_error_post):
+                with patch("asyncio.sleep", new_callable=AsyncMock):
+                    results = await engine.run(surface, [payload], category="direct")
+
+        assert results == [None]
+        assert call_count == 1   # no retries for non-retryable errors
+        await engine.close()
+
+    @pytest.mark.asyncio
+    async def test_retry_delays_are_exponential(self):
+        """Verify backoff sleep calls use correct 0 / 1 / 2 / 4 s delays."""
+        config  = make_config()
+        state   = make_state()
+        engine  = PayloadEngine(config, state)
+        surface = make_surface()
+        payload = make_payload()
+
+        mock_baseline = make_mock_response("Hello!")
+
+        sleep_calls: list[float] = []
+
+        async def tracking_sleep(seconds: float) -> None:
+            sleep_calls.append(seconds)
+
+        async def always_timeout(*args, **kwargs):
+            raise httpx.TimeoutException("timeout")
+
+        with patch.object(engine.client, "get", new_callable=AsyncMock, return_value=mock_baseline):
+            with patch.object(engine.client, "post", new_callable=AsyncMock, side_effect=always_timeout):
+                # Patch asyncio.sleep inside the engine module specifically
+                with patch("phantom.payloads.engine.asyncio.sleep", side_effect=tracking_sleep):
+                    await engine.run(surface, [payload], category="direct")
+
+        # The sleep calls from _execute_payload:
+        # - 1 rate-limit sleep (config.rate_limit_delay)
+        # - attempt 1: delay=0.0 (skipped by `if delay:`)
+        # - attempt 2: delay=1.0
+        # - attempt 3: delay=2.0
+        # Total: rate_limit_delay, 1.0, 2.0
+        backoff_sleeps = [s for s in sleep_calls if s in (1.0, 2.0, 4.0)]
+        assert backoff_sleeps == [1.0, 2.0]
         await engine.close()

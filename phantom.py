@@ -161,7 +161,7 @@ def _add_common_args(sub_parser: argparse.ArgumentParser) -> None:
     sub_parser.add_argument("--max-pages", type=int,   default=100,   help="Max pages to crawl")
     sub_parser.add_argument("--concurrency", type=int, default=5,     help="Concurrent requests")
     sub_parser.add_argument("--rate",      type=float, default=1.0,   help="Requests per second")
-    sub_parser.add_argument("--no-robots", action="store_true",        help="Ignore robots.txt")
+    sub_parser.add_argument("--robots",    action="store_true",        help="Respect robots.txt (default: ignored — pentesters don't care about robots.txt)")
     sub_parser.add_argument("--verbose",   "-v", action="store_true",  help="Debug-level logging")
     sub_parser.add_argument("--no-color",  action="store_true",        help="Disable color output")
     sub_parser.add_argument(
@@ -177,6 +177,98 @@ def _add_common_args(sub_parser: argparse.ArgumentParser) -> None:
             "whose HTTP responses lack OpenAI-style signals (SSE headers, "
             "JSON schema) but are known to be LLM-backed."
         ),
+    )
+    sub_parser.add_argument(
+        "--insecure",
+        action="store_true",
+        help=(
+            "Allow self-signed SSL certificates. Disables SSL verification. "
+            "⚠️  Only use this when testing internal targets or development environments."
+        ),
+    )
+    sub_parser.add_argument(
+        "--ssl-cert",
+        type=str,
+        default="",
+        help="Path to SSL certificate file (PEM format) for verifying the target's cert.",
+    )
+
+    # --- Authentication flags ---
+    auth = sub_parser.add_argument_group(
+        "authentication",
+        "Pass credentials for targets that require auth. All flags are additive "
+        "and can be combined (e.g. --auth-bearer with --auth-cookie).",
+    )
+    auth.add_argument(
+        "--auth-header",
+        metavar="NAME:VALUE",
+        action="append",
+        default=[],
+        dest="auth_headers",
+        help=(
+            "Inject a raw HTTP header for every request. "
+            "Format: 'Header-Name:value'. "
+            "Repeat the flag for multiple headers. "
+            "Example: --auth-header 'X-API-Key:secret123'"
+        ),
+    )
+    auth.add_argument(
+        "--auth-cookie",
+        metavar="NAME=VALUE",
+        action="append",
+        default=[],
+        dest="auth_cookies",
+        help=(
+            "Inject a session cookie for every request. "
+            "Format: 'name=value'. "
+            "Repeat the flag for multiple cookies. "
+            "Example: --auth-cookie 'sessionid=abc123' --auth-cookie 'csrftoken=xyz'"
+        ),
+    )
+    auth.add_argument(
+        "--auth-bearer",
+        metavar="TOKEN",
+        default="",
+        dest="auth_bearer",
+        help=(
+            "Set the Authorization: Bearer <TOKEN> header for every request. "
+            "Shorthand for --auth-header 'Authorization:Bearer <TOKEN>'. "
+            "Example: --auth-bearer eyJhbGciOiJSUzI1NiJ9..."
+        ),
+    )
+
+    # --- Adaptive attack engine ---
+    adapt = sub_parser.add_argument_group(
+        "adaptive engine",
+        "LLM-powered adaptive attack loop. Detects the target's defence mechanism "
+        "and synthesises novel bypass payloads via the Anthropic API. "
+        "Requires ANTHROPIC_API_KEY to be set.",
+    )
+    adapt.add_argument(
+        "--adaptive",
+        action="store_true",
+        dest="adaptive_attack",
+        help=(
+            "Enable the adaptive attack engine. After static payload injection, "
+            "Phantom will probe each surface, classify its defence, and use Claude "
+            "to synthesise targeted bypass payloads iteratively."
+        ),
+    )
+    adapt.add_argument(
+        "--adaptive-rounds",
+        type=int,
+        default=3,
+        metavar="N",
+        dest="adaptive_max_rounds",
+        help="Max synthesis rounds per surface (default: 3). Each round costs API calls.",
+    )
+    adapt.add_argument(
+        "--adaptive-candidates",
+        type=int,
+        default=5,
+        metavar="N",
+        dest="adaptive_candidates_per_round",
+        help="Bypass candidates synthesised per round (default: 5).",
     )
 
 
@@ -454,6 +546,31 @@ async def cmd_scan(
             tracker=tracker,
         )
 
+        # Phase 4b: Multi-turn attack orchestration
+        if not categories or "multi_turn" in categories:
+            from phantom.payloads.orchestrator import run_multi_turn_attacks
+            mt_surfaces = [s for s in surfaces if s.surface_type in
+                           ("chatbox", "generic_ai", "ai_search")]
+            if mt_surfaces:
+                print_section("PHASE 4b -- MULTI-TURN ATTACKS")
+                await run_multi_turn_attacks(
+                    config=config,
+                    state=state,
+                    surfaces=mt_surfaces,
+                )
+
+        # Phase 4c: Adaptive attack (optional -- requires --adaptive + API key)
+        if config.adaptive_attack:
+            from phantom.payloads.adaptive import run_adaptive_attack
+            print_section("PHASE 4c -- ADAPTIVE ATTACK")
+            await run_adaptive_attack(
+                config=config,
+                state=state,
+                surfaces=surfaces,
+                max_rounds=config.adaptive_max_rounds,
+                candidates_per_round=config.adaptive_candidates_per_round,
+            )
+
         # Phase 5: Report generation
         written_files = run_report(config, state)
 
@@ -516,6 +633,64 @@ async def cmd_benchmark(args) -> None:
     log.info("Report → %s", md_path)
 
 
+def _parse_auth_args(args) -> tuple[dict[str, str], dict[str, str]]:
+    """
+    Parse --auth-header, --auth-cookie, and --auth-bearer CLI flags into
+    dicts suitable for PhantomConfig.custom_headers and .session_cookies.
+
+    Returns:
+        (custom_headers, session_cookies) — both dicts, possibly empty.
+
+    Raises:
+        SystemExit: if any flag value is malformed (bad separator, empty name).
+    """
+    custom_headers: dict[str, str] = {}
+    session_cookies: dict[str, str] = {}
+
+    # --auth-bearer shorthand → Authorization header
+    bearer = getattr(args, "auth_bearer", "")
+    if bearer:
+        custom_headers["Authorization"] = f"Bearer {bearer}"
+
+    # --auth-header NAME:VALUE  (colon separator, first colon only)
+    for raw in getattr(args, "auth_headers", []):
+        if ":" not in raw:
+            print(
+                f"[phantom] ERROR: --auth-header value must be 'Name:Value', got: {raw!r}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        name, _, value = raw.partition(":")
+        name = name.strip()
+        if not name:
+            print(
+                f"[phantom] ERROR: --auth-header has empty header name in: {raw!r}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        custom_headers[name] = value
+
+    # --auth-cookie NAME=VALUE  (equals separator, first equals only)
+    for raw in getattr(args, "auth_cookies", []):
+        if "=" not in raw:
+            print(
+                f"[phantom] ERROR: --auth-cookie value must be 'name=value', got: {raw!r}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        name, _, value = raw.partition("=")
+        name = name.strip()
+        if not name:
+            print(
+                f"[phantom] ERROR: --auth-cookie has empty cookie name in: {raw!r}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        session_cookies[name] = value
+
+    return custom_headers, session_cookies
+
+
 # ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
@@ -542,19 +717,38 @@ def main() -> None:
         return
 
     # --- Build base config kwargs from CLI args (for discover/scan) ---
+    custom_headers, session_cookies = _parse_auth_args(args)
+
     config_kwargs = dict(
         max_depth=args.depth,
         max_pages=args.max_pages,
         crawl_concurrency=args.concurrency,
         concurrency_limit=args.concurrency,
         rate_limit_rps=args.rate,
-        respect_robots=not args.no_robots,
+        respect_robots=getattr(args, "robots", False),  # off by default — robots.txt is for crawlers, not scanners
         output_dir=args.output_dir,
         verbose=args.verbose,
         no_color=args.no_color,
         report_formats=getattr(args, "formats", ["markdown", "json"]),
         assume_ai_surface=getattr(args, "assume_ai_surface", False),
+        allow_self_signed=getattr(args, "insecure", False),
+        ssl_cert_path=getattr(args, "ssl_cert", ""),
+        custom_headers=custom_headers,
+        session_cookies=session_cookies,
+        adaptive_attack=getattr(args, "adaptive_attack", False),
+        adaptive_max_rounds=getattr(args, "adaptive_max_rounds", 3),
+        adaptive_candidates_per_round=getattr(args, "adaptive_candidates_per_round", 5),
     )
+
+    # Log auth summary (names only — never log credential values)
+    if custom_headers:
+        log.info("Auth headers active: %s", ", ".join(custom_headers.keys()))
+    if session_cookies:
+        log.info("Auth cookies active: %s", ", ".join(session_cookies.keys()))
+
+    # Warn if using insecure mode
+    if getattr(args, "insecure", False):
+        log.warning("⚠️  SSL verification DISABLED (--insecure). Only use for internal/development targets.")
 
     # --- Apply profile overrides (profile < explicit CLI flags) ---
     # Strategy: apply profile first, then re-apply any explicitly set CLI
